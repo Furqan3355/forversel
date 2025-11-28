@@ -1,7 +1,7 @@
 {
   "functions": {
     "api/predict.py": {
-      "runtime": "@vercel/python@4",
+      "runtime": "@vercel/python",
       "memory": 2048,
       "maxDuration": 60
     }
