@@ -11,7 +11,7 @@ import uvicorn
 
 app = FastAPI(title="YOLOv12 Rice Panicle Detection")
 
-# CORS for Vercel (frontend se call ke liye)
+# CORS enable (Vercel frontend calls ke liye)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,15 +20,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Model load (Vercel serverless mein ek baar load ho jayega)
-model = YOLO("best.pt")
+# Model load (best.pt root mein hai, Vercel se access ho jayega)
+try:
+    model = YOLO("../best.pt")  # ../ kyunki api/ folder se root pe jaana hai
+except Exception as e:
+    print(f"Model load error: {e}")
+    model = None
 
 @app.get("/")
 def home():
-    return {"message": "YOLOv12 Rice API - Live on Vercel!"}
+    return {"message": "YOLOv12 Rice API - Live on Vercel! Use /predict for images."}
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
+    if not model:
+        return {"error": "Model not loaded"}
     contents = await file.read()
     nparr = np.frombuffer(contents, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -39,9 +45,10 @@ async def predict(file: UploadFile = File(...)):
     _, buf = cv2.imencode(".jpg", annotated)
     return StreamingResponse(BytesIO(buf.tobytes()), media_type="image/jpeg")
 
-# Video endpoint (Vercel pe short videos ke liye, lambi mat daal)
 @app.post("/predict_video")
 async def predict_video(file: UploadFile = File(...)):
+    if not model:
+        return {"error": "Model not loaded"}
     contents = await file.read()
     tmp_in = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
     tmp_in.write(contents)
@@ -60,9 +67,10 @@ async def predict_video(file: UploadFile = File(...)):
     out = cv2.VideoWriter(tmp_out, fourcc, 20.0, (width, height))
 
     frame_count = 0
+    max_frames = 50  # Vercel timeout ke liye limit (short videos only)
     while True:
         ret, frame = cap.read()
-        if not ret or frame_count > 50:  # Limit to 50 frames for Vercel timeout
+        if not ret or frame_count >= max_frames:
             break
         results = model(frame, conf=0.25, verbose=False)[0]
         out.write(results.plot())
@@ -72,10 +80,9 @@ async def predict_video(file: UploadFile = File(...)):
     out.release()
     os.unlink(tmp_in.name)
 
-    # Streaming response for Vercel (FileResponse se better)
     def iterfile():
-        with open(tmp_out, mode="rb") as file_like:
-            yield from file_like
+        with open(tmp_out, "rb") as f:
+            yield from f
         os.unlink(tmp_out)  # Cleanup
 
     return StreamingResponse(iterfile(), media_type="video/mp4", filename="result.mp4")
